@@ -1,7 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   Injectable,
@@ -9,86 +6,102 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import * as bcrypt from 'bcrypt';
+import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { RegisterDto } from './dto/registerr.dto';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AuthService {
   constructor(
     private prisma: PrismaService,
-    private jwtService: JwtService,
+    private jwt: JwtService,
+    private config: ConfigService,
   ) {}
 
-  async login(loginDto: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: loginDto.email },
+  // ── REGISTER ───────────────────────────────────────────────────────
+  async register(dto: RegisterDto) {
+    // Vérifier si l'email ou username est déjà pris
+    const existing = await this.prisma.user.findFirst({
+      where: { OR: [{ email: dto.email }, { username: dto.username }] },
     });
+    if (existing) throw new ConflictException('Email ou username déjà utilisé');
 
-    if (!user) {
-      throw new UnauthorizedException('Email ou mot de passe incorrect');
-    }
-
-    const isPasswordValid = await bcrypt.compare(
-      loginDto.password,
-      user.password,
-    );
-
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('Email ou mot de passe incorrect');
-    }
-
-    if (!user.estActif) {
-      throw new UnauthorizedException('Compte désactivé');
-    }
-
-    const payload = { sub: user.id, email: user.email, role: user.role };
-
-    return {
-      access_token: this.jwtService.sign(payload),
-      user: {
-        id: user.id,
-        email: user.email,
-        nom: user.nom,
-        prenom: user.prenom,
-        role: user.role,
-        agentType: user.agentType,
-      },
-    };
-  }
-
-  async register(registerDto: RegisterDto) {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: registerDto.email },
-    });
-
-    if (existingUser) {
-      throw new ConflictException('Cet email est déjà utilisé');
-    }
-
-    const hashedPassword = await bcrypt.hash(registerDto.password, 10);
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
 
     const user = await this.prisma.user.create({
       data: {
-        email: registerDto.email,
+        email: dto.email,
         password: hashedPassword,
-        nom: registerDto.nom,
-        prenom: registerDto.prenom,
-        role: registerDto.role,
-        agentType: registerDto.agentType,
-        telephone: registerDto.telephone,
-      },
-      select: {
-        id: true,
-        email: true,
-        nom: true,
-        prenom: true,
-        role: true,
-        agentType: true,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        username: dto.username,
+        role: dto.role as any,
+        agentType: (dto.agentType as any) ?? null,
+        studentGroup: dto.studentGroup ?? null,
+        department: dto.department ?? null,
       },
     });
 
-    return user;
+    return this.buildTokenResponse(user);
+  }
+
+  // ── LOGIN ──────────────────────────────────────────────────────────
+  async login(dto: LoginDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+    if (!user) throw new UnauthorizedException('Identifiants invalides');
+
+    const passwordMatch = await bcrypt.compare(dto.password, user.password);
+    if (!passwordMatch)
+      throw new UnauthorizedException('Identifiants invalides');
+
+    if (!user.isActive) throw new UnauthorizedException('Compte désactivé');
+
+    return this.buildTokenResponse(user);
+  }
+
+  // ── GET PROFILE ────────────────────────────────────────────────────
+  async getProfile(userId: string) {
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        username: true,
+        role: true,
+        agentType: true,
+        studentGroup: true,
+        department: true,
+        profilePicture: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  // ── HELPER ─────────────────────────────────────────────────────────
+  private buildTokenResponse(user: any) {
+    const payload = { sub: user.id, email: user.email, role: user.role };
+    return {
+      access_token: this.jwt.sign(payload, {
+        secret: this.config.get('JWT_SECRET'),
+        expiresIn: this.config.get('JWT_EXPIRES_IN'),
+      }),
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        username: user.username,
+        role: user.role,
+        agentType: user.agentType,
+        studentGroup: user.studentGroup,
+        department: user.department,
+      },
+    };
   }
 }

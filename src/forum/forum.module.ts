@@ -1,21 +1,13 @@
 import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
-import { ForumService } from './forum.service';
 import { ForumController } from './forum.controller';
+import { ForumService } from './forum.service';
 import { ForumGateway } from './forum.gateway';
-import { NotificationModule } from '../notification/notification.module';
+import { UsersModule } from '../users/users.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [
-    JwtModule.registerAsync({
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-      }),
-    }),
-    NotificationModule,
-  ],
+  imports: [UsersModule, NotificationsModule, AuthModule],
   controllers: [ForumController],
   providers: [ForumService, ForumGateway],
   exports: [ForumService],

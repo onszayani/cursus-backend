@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEmail, IsString, IsOptional, IsEnum } from 'class-validator';
-import { Role, AgentType } from '@prisma/client';
+import { UserRole, AgentType } from '@prisma/client';
 
 export class UpdateUserDto {
   @ApiProperty({ required: false })
@@ -20,10 +20,10 @@ export class UpdateUserDto {
   @IsOptional()
   prenom?: string;
 
-  @ApiProperty({ enum: Role, required: false })
-  @IsEnum(Role)
+  @ApiProperty({ enum: UserRole, required: false })
+  @IsEnum(UserRole)
   @IsOptional()
-  role?: Role;
+  role?: UserRole;
 
   @ApiProperty({ enum: AgentType, required: false })
   @IsEnum(AgentType)

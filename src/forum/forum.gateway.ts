@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-floating-promises */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
@@ -6,127 +5,158 @@ import {
   WebSocketGateway,
   WebSocketServer,
   SubscribeMessage,
+  MessageBody,
+  ConnectedSocket,
   OnGatewayConnection,
   OnGatewayDisconnect,
-  ConnectedSocket,
-  MessageBody,
+  OnGatewayInit,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-// import { UseGuards } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { Logger } from '@nestjs/common';
 import { ForumService } from './forum.service';
-import { CreateMessageDto } from './dto/create-message.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-  },
-  namespace: 'forum',
+  namespace: '/forum', // URL: ws://localhost:3000/forum
+  cors: { origin: '*', credentials: true },
 })
-export class ForumGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ForumGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
-  private userSockets: Map<string, string[]> = new Map(); // userId -> socketIds[]
+  private readonly logger = new Logger(ForumGateway.name);
+
+  // Map userId → socketId (pour les notifications ciblées)
+  private connectedUsers = new Map<string, string>();
 
   constructor(
-    private jwtService: JwtService,
+    private jwt: JwtService,
+    private config: ConfigService,
     private forumService: ForumService,
+    private notifService: NotificationsService,
   ) {}
 
-  handleConnection(client: Socket) {
+  afterInit() {
+    this.logger.log('WebSocket Gateway /forum initialisé');
+  }
+
+  // ── CONNEXION ───────────────────────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async handleConnection(client: Socket) {
     try {
-      const token = client.handshake.auth.token as string;
+      // Récupérer le token depuis les headers ou auth
+      const token =
+        client.handshake.auth?.token ||
+        client.handshake.headers?.authorization?.replace('Bearer ', '');
+
       if (!token) {
         client.disconnect();
         return;
       }
 
-      const payload = this.jwtService.verify(token);
-      const userId = payload.sub;
+      const payload = this.jwt.verify(token, {
+        secret: this.config.get('JWT_SECRET'),
+      });
 
-      // Stocker la connexion
-      const socketIds = this.userSockets.get(userId) || [];
-      socketIds.push(client.id);
-      this.userSockets.set(userId, socketIds);
+      // Stocker les infos de l'utilisateur sur le socket
+      client.data.userId = payload.sub;
+      client.data.userRole = payload.role;
+      client.data.email = payload.email;
 
-      // Joindre la room personnelle
-      client.join(`user:${userId}`);
+      // Enregistrer la connexion
+      this.connectedUsers.set(payload.sub, client.id);
+      this.logger.log(`User ${payload.email} connecté (socket: ${client.id})`);
 
-      console.log(`User ${userId} connected`);
-    } catch {
+      client.emit('connected', { message: 'Connecté au forum WebSocket' });
+    } catch (err) {
+      this.logger.warn(`Connexion rejetée: ${err.message}`);
       client.disconnect();
     }
   }
 
+  // ── DÉCONNEXION ─────────────────────────────────────────────────────
   handleDisconnect(client: Socket) {
-    // Supprimer la connexion
-    for (const [userId, socketIds] of this.userSockets.entries()) {
-      const index = socketIds.indexOf(client.id);
-      if (index !== -1) {
-        socketIds.splice(index, 1);
-        if (socketIds.length === 0) {
-          this.userSockets.delete(userId);
-        } else {
-          this.userSockets.set(userId, socketIds);
-        }
-        break;
-      }
+    if (client.data?.userId) {
+      this.connectedUsers.delete(client.data.userId);
+      this.logger.log(`User ${client.data.email} déconnecté`);
     }
   }
 
-  @SubscribeMessage('joinTopic')
-  handleJoinTopic(
+  // ── REJOINDRE UN THREAD ─────────────────────────────────────────────
+  // Client envoie: socket.emit('joinThread', 'thread-uuid')
+  @SubscribeMessage('joinThread')
+  handleJoinThread(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { topicId: string },
+    @MessageBody() threadId: string,
   ) {
-    client.join(`topic:${data.topicId}`);
+    client.join(`thread:${threadId}`);
+    this.logger.log(`User ${client.data.email} a rejoint thread:${threadId}`);
+    return { event: 'joinedThread', data: { threadId } };
   }
 
-  @SubscribeMessage('leaveTopic')
-  handleLeaveTopic(
+  // ── QUITTER UN THREAD ───────────────────────────────────────────────
+  @SubscribeMessage('leaveThread')
+  handleLeaveThread(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { topicId: string },
+    @MessageBody() threadId: string,
   ) {
-    client.leave(`topic:${data.topicId}`);
+    client.leave(`thread:${threadId}`);
+    return { event: 'leftThread', data: { threadId } };
   }
 
+  // ── ENVOYER UN MESSAGE VIA WEBSOCKET ────────────────────────────────
+  // Client envoie: socket.emit('sendMessage', { threadId, content, replyToId? })
   @SubscribeMessage('sendMessage')
-  async handleSendMessage(
+  async handleMessage(
     @ConnectedSocket() client: Socket,
     @MessageBody()
-    data: { topicId: string; message: CreateMessageDto; userId: string },
+    data: { threadId: string; content: string; replyToId?: string },
   ) {
-    const result = await this.forumService.createMessage(
-      data.topicId,
-      data.message,
-      data.userId,
+    if (!client.data?.userId) return;
+
+    // Enregistrer le message (+ déclencher les @mentions automatiquement)
+    const message = await this.forumService.sendMessage(
+      data.threadId,
+      client.data.userId,
+      { content: data.content, replyToId: data.replyToId },
     );
 
-    // Envoyer le message à tous les participants du topic
-    this.server.to(`topic:${data.topicId}`).emit('newMessage', result);
+    // Diffuser le message à tous les membres du thread
+    this.server.to(`thread:${data.threadId}`).emit('newMessage', message);
 
-    // Notifier les utilisateurs mentionnés
-    for (const mention of result.mentions) {
-      if (mention.userId) {
-        this.server.to(`user:${mention.userId}`).emit('newMention', {
-          messageId: result.message.id,
-          topicId: data.topicId,
-          auteur: result.message.auteur,
-          contenu: result.message.contenu,
-        });
-      }
-    }
+    return message;
   }
 
+  // ── INDICATEUR 'EN TRAIN D\'ÉCRIRE' ────────────────────────────────
+  // Client envoie: socket.emit('typing', { threadId, isTyping: true })
   @SubscribeMessage('typing')
   handleTyping(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { topicId: string; userId: string; isTyping: boolean },
+    @MessageBody() data: { threadId: string; isTyping: boolean },
   ) {
-    client.to(`topic:${data.topicId}`).emit('userTyping', {
-      userId: data.userId,
+    // Diffuser aux autres membres du thread
+    client.to(`thread:${data.threadId}`).emit('userTyping', {
+      userId: client.data.userId,
       isTyping: data.isTyping,
     });
+  }
+
+  // ── MÉTHODE PUBLIQUE pour notifier un user spécifique ───────────────
+  // Appelée par NotificationsService après création d'une notification
+  sendNotificationToUser(userId: string, notification: any) {
+    const socketId = this.connectedUsers.get(userId);
+    if (socketId) {
+      this.server.to(socketId).emit('notification', notification);
+      this.logger.log(`Notification envoyée à user ${userId}`);
+    }
+  }
+
+  // Vérifie si un user est en ligne
+  isUserOnline(userId: string): boolean {
+    return this.connectedUsers.has(userId);
   }
 }

@@ -1,110 +1,73 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   Controller,
   Get,
-  Post,
-  Body,
   Patch,
   Param,
-  Delete,
+  Body,
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiTags,
+  ApiOperation,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { UsersService } from './users.service';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { AssignGroupeDto } from './dto/assign-groupe.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { Role } from '@prisma/client';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
-@ApiTags('users')
+@ApiTags(' Users')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  // GET /users
   @Get()
-  @Roles(Role.ADMIN, Role.CHEF_DEPARTEMENT)
-  @ApiOperation({ summary: 'Récupérer tous les utilisateurs' })
-  findAll(
-    @Query('skip') skip?: string,
-    @Query('take') take?: string,
-    @Query('role') role?: string,
-  ) {
-    return this.usersService.findAll({
-      skip: skip ? parseInt(skip) : undefined,
-      take: take ? parseInt(take) : undefined,
-      role,
-    });
+  @ApiOperation({ summary: 'Liste tous les utilisateurs' })
+  findAll() {
+    return this.usersService.findAll();
   }
 
-  @Get('profile')
-  @ApiOperation({ summary: "Récupérer le profil de l'utilisateur connecté" })
-  getProfile(@CurrentUser() user: any) {
-    return this.usersService.findOne(user.id);
+  // GET /users/search?q=Ahmed   ← pour l'autocomplétion @mentions
+  @Get('search')
+  @ApiOperation({
+    summary: 'Recherche par username (autocomplétion @mentions)',
+  })
+  @ApiQuery({ name: 'q', description: 'Début du username' })
+  search(@Query('q') q: string) {
+    return this.usersService.searchByUsername(q ?? '');
   }
 
+  // GET /users/:id
   @Get(':id')
-  @ApiOperation({ summary: 'Récupérer un utilisateur par ID' })
+  @ApiOperation({ summary: "Profil d'un utilisateur" })
   findOne(@Param('id') id: string) {
-    return this.usersService.findOne(id);
+    return this.usersService.findById(id);
   }
 
-  @Patch(':id')
-  @ApiOperation({ summary: 'Mettre à jour un utilisateur' })
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(id, updateUserDto);
+  // PATCH /users/me
+  @Patch('me')
+  @ApiOperation({ summary: 'Modifier mon profil' })
+  updateMe(@CurrentUser() user: any, @Body() dto: any) {
+    const { password, role, email, ...safe } = dto; // champs non modifiables
+    return this.usersService.updateProfile(user.id, safe);
   }
 
-  @Delete(':id')
-  @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Supprimer un utilisateur' })
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(id);
-  }
-
-  @Post(':id/groupes')
-  @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Assigner un étudiant à un groupe' })
-  assignGroupe(
-    @Param('id') id: string,
-    @Body() assignGroupeDto: AssignGroupeDto,
-  ) {
-    return this.usersService.assignGroupe(id, assignGroupeDto);
-  }
-
-  @Delete(':id/groupes/:groupeId')
-  @Roles(Role.ADMIN)
-  @ApiOperation({ summary: "Retirer un étudiant d'un groupe" })
-  removeGroupe(@Param('id') id: string, @Param('groupeId') groupeId: string) {
-    return this.usersService.removeGroupe(id, groupeId);
-  }
-
-  @Get(':id/groupes')
-  @ApiOperation({ summary: "Récupérer les groupes d'un utilisateur" })
-  getGroupes(@Param('id') id: string) {
-    return this.usersService.getGroupes(id);
-  }
-
-  @Patch(':id/password')
-  @ApiOperation({ summary: 'Modifier le mot de passe' })
-  updatePassword(
-    @Param('id') id: string,
-    @Body('currentPassword') currentPassword: string,
-    @Body('newPassword') newPassword: string,
-  ) {
-    return this.usersService.updatePassword(id, currentPassword, newPassword);
-  }
-
-  @Patch(':id/toggle-activation')
-  @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Activer/désactiver un compte utilisateur' })
-  toggleActivation(@Param('id') id: string) {
-    return this.usersService.toggleActivation(id);
-  }
+  //   // PATCH /users/:id/toggle  ← admin uniquement
+  //   @Patch(':id/toggle')
+  //   @UseGuards(RolesGuard)
+  //   @Roles('admin')
+  //   @ApiOperation({ summary: 'Activer/désactiver un utilisateur (admin)' })
+  //   toggle(@Param('id') id: string, @Body() dto: { isActive: boolean }) {
+  //     return this.usersService.toggleActive(id, dto.isActive);
+  //   }
 }

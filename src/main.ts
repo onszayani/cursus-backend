@@ -1,60 +1,47 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
-import * as express from 'express';
-import { join } from 'path';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // CORS
-  app.enableCors({
-    origin:
-      process.env.NODE_ENV === 'production'
-        ? ['https://votre-domaine.com']
-        : '*',
-    credentials: true,
-  });
-
-  // Validation globale
+  // Validation automatique de tous les DTOs
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true,
+      whitelist: true, // ignore les champs non déclarés dans le DTO
+      transform: true, // convertit les types automatiquement
       forbidNonWhitelisted: true,
-      transform: true,
     }),
   );
 
-  // Dossiers statiques pour les uploads
-  app.use('/uploads', express.static(join(__dirname, '..', 'uploads')));
+  // CORS — autoriser le frontend à appeler l'API
+  app.enableCors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    credentials: true,
+  });
+
+  // WebSocket adapter
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   // Swagger documentation
   const config = new DocumentBuilder()
-    .setTitle('Cursus Universitaire API')
-    .setDescription(
-      'API pour la gestion du cursus universitaire, forum et notifications',
-    )
+    .setTitle('ISSAT Cursus API')
+    .setDescription('Backend — Gestion du cursus universitaire ISSAT Sousse')
     .setVersion('1.0')
     .addBearerAuth()
-    .addTag('auth', 'Authentification')
-    .addTag('users', 'Gestion des utilisateurs')
-    .addTag('emploi-du-temps', 'Gestion des emplois du temps')
-    .addTag('support-cours', 'Gestion des supports de cours')
-    .addTag('actualites', 'Gestion des actualités')
-    .addTag('groupes', 'Gestion des groupes')
-    .addTag('forum', 'Forum de discussion')
-    .addTag('notifications', 'Gestion des notifications')
     .build();
-
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api-docs', app, document);
-
-  const port = process.env.PORT || 3000;
-  await app.listen(port);
-  console.log(`Application running on port ${port}`);
-  console.log(
-    `Swagger documentation available at http://localhost:${port}/api-docs`,
+  SwaggerModule.setup(
+    'api/docs',
+    app,
+    SwaggerModule.createDocument(app, config),
   );
+
+  const port = process.env.PORT ?? 3000;
+  await app.listen(port);
+  console.log(`API: http://localhost:${port}`);
+  console.log(`Docs Swagger: http://localhost:${port}/api/docs`);
 }
 void bootstrap();

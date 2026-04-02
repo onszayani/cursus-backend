@@ -1,29 +1,34 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ServeStaticModule } from '@nestjs/serve-static';
+import { join } from 'path';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
-import { EmploiDuTempsModule } from './emploi-du-temps/emploi-du-temps.module';
-import { SupportCoursModule } from './support-cours/support-cours.module';
-import { ActualiteModule } from './actualite/actualite.module';
-import { GroupeModule } from './groupe/groupe.module';
+import { ScheduleModule } from './schedule/schedule.module';
+import { NewsModule } from './news/news.module';
+import { CoursesModule } from './courses/courses.module';
 import { ForumModule } from './forum/forum.module';
-import { NotificationModule } from './notification/notification.module';
-
+import { NotificationsModule } from './notifications/notifications.module';
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
+    // Charge les variables d'environnement (.env) globalement
+    ConfigModule.forRoot({ isGlobal: true }),
+
+    // Sert les fichiers uploadés sur /files/
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', 'uploads'),
+      serveRoot: '/files',
     }),
-    PrismaModule,
-    AuthModule,
-    UsersModule,
-    EmploiDuTempsModule,
-    SupportCoursModule,
-    ActualiteModule,
-    GroupeModule,
-    ForumModule,
-    NotificationModule,
+
+    PrismaModule, // BDD Prisma (global)
+    AuthModule, // Authentification JWT
+    UsersModule, // Gestion des utilisateurs
+    ScheduleModule, // Emplois du temps
+    NewsModule, // Actualités
+    CoursesModule, // Supports de cours
+    ForumModule, // Forum + @mentions
+    NotificationsModule, // Notifications
   ],
 })
 export class AppModule {}

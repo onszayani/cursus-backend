@@ -1,3 +1,6 @@
+// ─────────────────────────────────────────────────────────────────────
+// Connexion PostgreSQL via la variable DATABASE_URL du .env
+// ─────────────────────────────────────────────────────────────────────
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,319 +10,210 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Enum pour les rôles
-enum Role {
-  ETUDIANT
-  ENSEIGNANT
-  AGENT
-  ADMIN
-  CHEF_DEPARTEMENT
+// ═════════════════════════════════════════════════════════════════════
+// ENUMS
+// ═════════════════════════════════════════════════════════════════════
+
+enum UserRole {
+  student
+  teacher
+  agent
+  admin
 }
 
-// Enum pour les types d'agents
 enum AgentType {
-  ADMINISTRATIF
-  TECHNICIEN
-  RESPONSABLE_LABO
-  BIBLIOTHECAIRE
-  AUTRE
+  agent_administratif
+  technicien
+  responsable_labo
+  bibliothecaire
+  securite
+  autre
 }
 
-// Enum pour les types de notifications
-enum NotificationType {
-  FORUM_MENTION
-  FORUM_MESSAGE
-  COURS_NOUVEAU
-  ACTUALITE
-  EMPLOI_MODIFIE
-  SURVEILLANCE
+enum MentionType {
+  ALL // @tous
+  ROLE // @technicien, @admin, @enseignant
+  GROUP // @ING_A1_G1
+  USER // @Ahmed_Ben
 }
 
-// Enum pour le statut du sujet de forum
-enum ForumTopicStatus {
-  ACTIF
-  FERME
-  ARCHIVE
-}
+// ═════════════════════════════════════════════════════════════════════
+// TABLE USERS — tous les rôles dans une seule table
+// ═════════════════════════════════════════════════════════════════════
 
-// Model User
 model User {
-  id        String     @id @default(uuid())
-  email     String     @unique
+  id        String   @id @default(uuid())
+  email     String   @unique
   password  String
-  nom       String
-  prenom    String
-  role      Role
-  agentType AgentType?
-  photo     String?
-  telephone String?
-  estActif  Boolean    @default(true)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  firstName String
+  lastName  String
+  username  String   @unique // utilisé pour les @mentions (@Ahmed_Ben)
+  role      UserRole
+
+  // Champs spécifiques selon le rôle
+  agentType      AgentType? // uniquement si role == agent
+  studentGroup   String? // ex: 'ING_A1_G1' (uniquement si role == student)
+  department     String? // ex: 'informatique'
+  profilePicture String?
+  isActive       Boolean    @default(true)
+  refreshToken   String?
 
   // Relations
-  etudiantGroupe      GroupeEtudiant[]
-  coursEnseignes      CoursEnseignant[]
-  messages            Message[]
-  notifications       Notification[]
-  topics              ForumTopic[]
-  topicParticipations TopicParticipation[]
-  surveillances       Surveillance[]
-  presentations       PresentationJury[]
-  mentions            Mention[]
+  taughtSchedules   Schedule[]       @relation("TeacherSchedules")
+  publishedNews     News[]           @relation("AuthorNews")
+  uploadedMaterials CourseMaterial[] @relation("TeacherMaterials")
+  sentMessages      Message[]        @relation("SenderMessages")
+  createdThreads    Thread[]         @relation("CreatorThreads")
+  notifications     Notification[]   @relation("RecipientNotifications")
 
-  // Relations PresentationPFE
-  pfeEncadreur PresentationPFE[] @relation("presentation_encadreur")
-  pfeEtudiant  PresentationPFE[] @relation("presentation_etudiant")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("users")
 }
 
-// Model Groupe (Classe)
-model Groupe {
-  id            String   @id @default(uuid())
-  nom           String   @unique
-  niveau        String
-  specialite    String
-  anneeScolaire String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+// ═════════════════════════════════════════════════════════════════════
+// TABLE SCHEDULE — emplois du temps
+// ═════════════════════════════════════════════════════════════════════
 
-  etudiants GroupeEtudiant[]
-  emplois   EmploiDuTemps[]
+model Schedule {
+  id           String  @id @default(uuid())
+  subject      String // matière
+  room         String // salle
+  dayOfWeek    Int // 0=Lundi, 1=Mardi, 2=Mercredi, 3=Jeudi, 4=Vendredi
+  startTime    String // ex: '08:00'
+  endTime      String // ex: '10:00'
+  studentGroup String // ex: 'ING_A1_G1'
+  semester     String? // ex: 'S1'
+  type         String? // ex: 'cours', 'td', 'tp'
 
-  @@map("groupes")
+  teacherId String?
+  teacher   User?   @relation("TeacherSchedules", fields: [teacherId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@map("schedules")
 }
 
-// Model GroupeEtudiant
-model GroupeEtudiant {
-  id              String   @id @default(uuid())
-  userId          String
-  groupeId        String
-  dateInscription DateTime @default(now())
+// ═════════════════════════════════════════════════════════════════════
+// TABLE NEWS — actualités
+// ═════════════════════════════════════════════════════════════════════
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  groupe Groupe @relation(fields: [groupeId], references: [id], onDelete: Cascade)
+model News {
+  id          String  @id @default(uuid())
+  title       String
+  content     String
+  imageUrl    String?
+  isPinned    Boolean @default(false)
+  targetGroup String? // null = tous, sinon ex: 'ING_A1_G1'
 
-  @@unique([userId, groupeId])
-  @@map("groupes_etudiants")
-}
+  authorId String
+  author   User   @relation("AuthorNews", fields: [authorId], references: [id])
 
-// Model Cours
-model Cours {
-  id                 String   @id @default(uuid())
-  titre              String
-  description        String?
-  matiere            String
-  semestre           Int
-  anneeUniversitaire String
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-
-  enseignants CoursEnseignant[]
-  supports    SupportCours[]
-  emplois     EmploiDuTemps[]
-
-  @@map("cours")
-}
-
-// Model CoursEnseignant
-model CoursEnseignant {
-  id               String @id @default(uuid())
-  userId           String
-  coursId          String
-  heuresParSemaine Float?
-
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  cours Cours @relation(fields: [coursId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, coursId])
-  @@map("cours_enseignants")
-}
-
-// Model EmploiDuTemps
-model EmploiDuTemps {
-  id         String   @id @default(uuid())
-  groupeId   String
-  coursId    String
-  jour       String
-  heureDebut String
-  heureFin   String
-  salle      String
-  type       String
-  semaine    Int
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  groupe Groupe @relation(fields: [groupeId], references: [id], onDelete: Cascade)
-  cours  Cours  @relation(fields: [coursId], references: [id], onDelete: Cascade)
-
-  @@map("emplois_du_temps")
-}
-
-// Model SupportCours
-model SupportCours {
-  id          String   @id @default(uuid())
-  titre       String
-  description String?
-  fichierUrl  String
-  typeFichier String
-  coursId     String
-  uploadedBy  String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  cours Cours @relation(fields: [coursId], references: [id], onDelete: Cascade)
-
-  @@map("supports_cours")
-}
-
-// Model Actualite
-model Actualite {
-  id              String    @id @default(uuid())
-  titre           String
-  contenu         String
-  imageUrl        String?
-  publiePar       String
-  cible           String?
-  datePublication DateTime  @default(now())
-  dateExpiration  DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  @@map("actualites")
-}
-
-// Model ForumTopic
-model ForumTopic {
-  id        String           @id @default(uuid())
-  titre     String
-  contenu   String
-  createdBy String
-  status    ForumTopicStatus @default(ACTIF)
-  estPinned Boolean          @default(false)
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-
-  auteur       User                 @relation(fields: [createdBy], references: [id], onDelete: Cascade)
-  messages     Message[]
-  participants TopicParticipation[]
-
-  @@map("forum_topics")
-}
-
-// Model TopicParticipation
-model TopicParticipation {
-  id       String   @id @default(uuid())
-  topicId  String
-  userId   String
-  lastRead DateTime @default(now())
-
-  topic ForumTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([topicId, userId])
-  @@map("topic_participations")
-}
-
-// Model Message
-model Message {
-  id        String   @id @default(uuid())
-  contenu   String
-  topicId   String
-  userId    String
-  parentId  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  topic    ForumTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  auteur   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mentions Mention[]
-
-  @@map("messages")
+  @@map("news")
 }
 
-// Model Mention
-model Mention {
-  id        String   @id @default(uuid())
-  messageId String
-  userId    String
-  type      String
-  valeur    String
-  lu        Boolean  @default(false)
+// ═════════════════════════════════════════════════════════════════════
+// TABLE COURSE_MATERIALS — supports de cours
+// ═════════════════════════════════════════════════════════════════════
+
+model CourseMaterial {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+  fileName    String // nom original du fichier
+  filePath    String // chemin stocké sur le serveur
+  subject     String // matière concernée
+  targetGroup String // ex: 'ING_A1_G1' ou 'all'
+  semester    String?
+
+  teacherId String
+  teacher   User   @relation("TeacherMaterials", fields: [teacherId], references: [id])
+
+  uploadedAt DateTime @default(now())
+
+  @@map("course_materials")
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// TABLE FORUM THREADS — sujets du forum
+// ═════════════════════════════════════════════════════════════════════
+
+model Thread {
+  id        String  @id @default(uuid())
+  title     String
+  isPrivate Boolean @default(false)
+
+  creatorId String
+  creator   User   @relation("CreatorThreads", fields: [creatorId], references: [id])
+
+  messages Message[]
+
   createdAt DateTime @default(now())
 
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  user    User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("forum_threads")
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// TABLE MESSAGES — messages du forum
+// ═════════════════════════════════════════════════════════════════════
+
+model Message {
+  id            String  @id @default(uuid())
+  content       String
+  attachmentUrl String?
+
+  senderId String
+  sender   User   @relation("SenderMessages", fields: [senderId], references: [id])
+
+  threadId String
+  thread   Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  // Réponse à un autre message
+  replyToId String?
+  replyTo   Message?  @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies   Message[] @relation("MessageReplies")
+
+  mentions Mention[]
+
+  createdAt DateTime @default(now())
+
+  @@map("forum_messages")
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// TABLE MENTIONS — résolution des @tags dans les messages
+// ═════════════════════════════════════════════════════════════════════
+
+model Mention {
+  id          String      @id @default(uuid())
+  type        MentionType
+  targetValue String // ex: 'technicien', 'ING_A1_G1', 'Ahmed_Ben', 'tous'
+
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@map("mentions")
 }
 
-// Model Notification
-model Notification {
-  id        String           @id @default(uuid())
-  userId    String
-  type      NotificationType
-  titre     String
-  contenu   String
-  data      Json?
-  lu        Boolean          @default(false)
-  createdAt DateTime         @default(now())
+// ═════════════════════════════════════════════════════════════════════
+// TABLE NOTIFICATIONS
+// ═════════════════════════════════════════════════════════════════════
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+model Notification {
+  id     String  @id @default(uuid())
+  title  String
+  body   String
+  isRead Boolean @default(false)
+  link   String? // lien vers le thread/message concerné
+
+  recipientId String
+  recipient   User   @relation("RecipientNotifications", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
 
   @@map("notifications")
-}
-
-// Model Surveillance
-model Surveillance {
-  id           String   @id @default(uuid())
-  enseignantId String
-  date         DateTime
-  heureDebut   String
-  heureFin     String
-  salle        String
-  matiere      String
-  classe       String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  enseignant User @relation(fields: [enseignantId], references: [id], onDelete: Cascade)
-
-  @@map("surveillances")
-}
-
-// Model PresentationPFE
-model PresentationPFE {
-  id          String   @id @default(uuid())
-  sujet       String
-  etudiantId  String
-  encadreurId String
-  date        DateTime
-  heureDebut  String
-  heureFin    String
-  salle       String
-  status      String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  etudiant  User               @relation("presentation_etudiant", fields: [etudiantId], references: [id], onDelete: Cascade)
-  encadreur User               @relation("presentation_encadreur", fields: [encadreurId], references: [id], onDelete: Cascade)
-  jurys     PresentationJury[]
-
-  @@map("presentations_pfe")
-}
-
-// Model PresentationJury
-model PresentationJury {
-  id             String @id @default(uuid())
-  presentationId String
-  enseignantId   String
-  role           String
-
-  presentation PresentationPFE @relation(fields: [presentationId], references: [id], onDelete: Cascade)
-  enseignant   User            @relation(fields: [enseignantId], references: [id], onDelete: Cascade)
-
-  @@unique([presentationId, enseignantId])
-  @@map("presentations_jury")
 }
