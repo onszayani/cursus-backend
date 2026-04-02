@@ -1,0 +1,325 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enum pour les rôles
+enum Role {
+  ETUDIANT
+  ENSEIGNANT
+  AGENT
+  ADMIN
+  CHEF_DEPARTEMENT
+}
+
+// Enum pour les types d'agents
+enum AgentType {
+  ADMINISTRATIF
+  TECHNICIEN
+  RESPONSABLE_LABO
+  BIBLIOTHECAIRE
+  AUTRE
+}
+
+// Enum pour les types de notifications
+enum NotificationType {
+  FORUM_MENTION
+  FORUM_MESSAGE
+  COURS_NOUVEAU
+  ACTUALITE
+  EMPLOI_MODIFIE
+  SURVEILLANCE
+}
+
+// Enum pour le statut du sujet de forum
+enum ForumTopicStatus {
+  ACTIF
+  FERME
+  ARCHIVE
+}
+
+// Model User
+model User {
+  id        String     @id @default(uuid())
+  email     String     @unique
+  password  String
+  nom       String
+  prenom    String
+  role      Role
+  agentType AgentType?
+  photo     String?
+  telephone String?
+  estActif  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  etudiantGroupe      GroupeEtudiant[]
+  coursEnseignes      CoursEnseignant[]
+  messages            Message[]
+  notifications       Notification[]
+  topics              ForumTopic[]
+  topicParticipations TopicParticipation[]
+  surveillances       Surveillance[]
+  presentations       PresentationJury[]
+  mentions            Mention[]
+
+  // Relations PresentationPFE
+  pfeEncadreur PresentationPFE[] @relation("presentation_encadreur")
+  pfeEtudiant  PresentationPFE[] @relation("presentation_etudiant")
+
+  @@map("users")
+}
+
+// Model Groupe (Classe)
+model Groupe {
+  id            String   @id @default(uuid())
+  nom           String   @unique
+  niveau        String
+  specialite    String
+  anneeScolaire String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  etudiants GroupeEtudiant[]
+  emplois   EmploiDuTemps[]
+
+  @@map("groupes")
+}
+
+// Model GroupeEtudiant
+model GroupeEtudiant {
+  id              String   @id @default(uuid())
+  userId          String
+  groupeId        String
+  dateInscription DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  groupe Groupe @relation(fields: [groupeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupeId])
+  @@map("groupes_etudiants")
+}
+
+// Model Cours
+model Cours {
+  id                 String   @id @default(uuid())
+  titre              String
+  description        String?
+  matiere            String
+  semestre           Int
+  anneeUniversitaire String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  enseignants CoursEnseignant[]
+  supports    SupportCours[]
+  emplois     EmploiDuTemps[]
+
+  @@map("cours")
+}
+
+// Model CoursEnseignant
+model CoursEnseignant {
+  id               String @id @default(uuid())
+  userId           String
+  coursId          String
+  heuresParSemaine Float?
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cours Cours @relation(fields: [coursId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, coursId])
+  @@map("cours_enseignants")
+}
+
+// Model EmploiDuTemps
+model EmploiDuTemps {
+  id         String   @id @default(uuid())
+  groupeId   String
+  coursId    String
+  jour       String
+  heureDebut String
+  heureFin   String
+  salle      String
+  type       String
+  semaine    Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  groupe Groupe @relation(fields: [groupeId], references: [id], onDelete: Cascade)
+  cours  Cours  @relation(fields: [coursId], references: [id], onDelete: Cascade)
+
+  @@map("emplois_du_temps")
+}
+
+// Model SupportCours
+model SupportCours {
+  id          String   @id @default(uuid())
+  titre       String
+  description String?
+  fichierUrl  String
+  typeFichier String
+  coursId     String
+  uploadedBy  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  cours Cours @relation(fields: [coursId], references: [id], onDelete: Cascade)
+
+  @@map("supports_cours")
+}
+
+// Model Actualite
+model Actualite {
+  id              String    @id @default(uuid())
+  titre           String
+  contenu         String
+  imageUrl        String?
+  publiePar       String
+  cible           String?
+  datePublication DateTime  @default(now())
+  dateExpiration  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("actualites")
+}
+
+// Model ForumTopic
+model ForumTopic {
+  id        String           @id @default(uuid())
+  titre     String
+  contenu   String
+  createdBy String
+  status    ForumTopicStatus @default(ACTIF)
+  estPinned Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  auteur       User                 @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  messages     Message[]
+  participants TopicParticipation[]
+
+  @@map("forum_topics")
+}
+
+// Model TopicParticipation
+model TopicParticipation {
+  id       String   @id @default(uuid())
+  topicId  String
+  userId   String
+  lastRead DateTime @default(now())
+
+  topic ForumTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([topicId, userId])
+  @@map("topic_participations")
+}
+
+// Model Message
+model Message {
+  id        String   @id @default(uuid())
+  contenu   String
+  topicId   String
+  userId    String
+  parentId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  topic    ForumTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  auteur   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mentions Mention[]
+
+  @@map("messages")
+}
+
+// Model Mention
+model Mention {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  type      String
+  valeur    String
+  lu        Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("mentions")
+}
+
+// Model Notification
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  titre     String
+  contenu   String
+  data      Json?
+  lu        Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+// Model Surveillance
+model Surveillance {
+  id           String   @id @default(uuid())
+  enseignantId String
+  date         DateTime
+  heureDebut   String
+  heureFin     String
+  salle        String
+  matiere      String
+  classe       String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  enseignant User @relation(fields: [enseignantId], references: [id], onDelete: Cascade)
+
+  @@map("surveillances")
+}
+
+// Model PresentationPFE
+model PresentationPFE {
+  id          String   @id @default(uuid())
+  sujet       String
+  etudiantId  String
+  encadreurId String
+  date        DateTime
+  heureDebut  String
+  heureFin    String
+  salle       String
+  status      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  etudiant  User               @relation("presentation_etudiant", fields: [etudiantId], references: [id], onDelete: Cascade)
+  encadreur User               @relation("presentation_encadreur", fields: [encadreurId], references: [id], onDelete: Cascade)
+  jurys     PresentationJury[]
+
+  @@map("presentations_pfe")
+}
+
+// Model PresentationJury
+model PresentationJury {
+  id             String @id @default(uuid())
+  presentationId String
+  enseignantId   String
+  role           String
+
+  presentation PresentationPFE @relation(fields: [presentationId], references: [id], onDelete: Cascade)
+  enseignant   User            @relation(fields: [enseignantId], references: [id], onDelete: Cascade)
+
+  @@unique([presentationId, enseignantId])
+  @@map("presentations_jury")
+}
