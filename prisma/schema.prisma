@@ -47,7 +47,7 @@ model User {
   password  String
   firstName String
   lastName  String
-  username  String   @unique // utilisé pour les @mentions (@Ahmed_Ben)
+  username  String   @unique 
   role      UserRole
 
   // Champs spécifiques selon le rôle

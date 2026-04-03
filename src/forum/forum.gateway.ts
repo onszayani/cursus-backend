@@ -26,7 +26,7 @@ export class ForumGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   private readonly logger = new Logger(ForumGateway.name);
 
@@ -73,7 +73,11 @@ export class ForumGateway
 
       client.emit('connected', { message: 'Connecté au forum WebSocket' });
     } catch (err) {
-      this.logger.warn(`Connexion rejetée: ${err.message}`);
+      if (err instanceof Error) {
+        this.logger.warn(`Connexion rejetée: ${err.message}`);
+      } else {
+        this.logger.warn(`Connexion rejetée: ${String(err)}`);
+      }
       client.disconnect();
     }
   }
@@ -89,22 +93,22 @@ export class ForumGateway
   // ── REJOINDRE UN THREAD ─────────────────────────────────────────────
   // Client envoie: socket.emit('joinThread', 'thread-uuid')
   @SubscribeMessage('joinThread')
-  handleJoinThread(
+  async handleJoinThread(
     @ConnectedSocket() client: Socket,
     @MessageBody() threadId: string,
   ) {
-    client.join(`thread:${threadId}`);
+    await client.join(`thread:${threadId}`);
     this.logger.log(`User ${client.data.email} a rejoint thread:${threadId}`);
     return { event: 'joinedThread', data: { threadId } };
   }
 
   // ── QUITTER UN THREAD ───────────────────────────────────────────────
   @SubscribeMessage('leaveThread')
-  handleLeaveThread(
+  async handleLeaveThread(
     @ConnectedSocket() client: Socket,
     @MessageBody() threadId: string,
   ) {
-    client.leave(`thread:${threadId}`);
+    await client.leave(`thread:${threadId}`);
     return { event: 'leftThread', data: { threadId } };
   }
 

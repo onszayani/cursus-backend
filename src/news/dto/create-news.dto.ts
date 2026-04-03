@@ -4,11 +4,11 @@ import { ApiProperty } from '@nestjs/swagger';
 export class CreateNewsDto {
   @ApiProperty({ example: 'Fermeture de la bibliothèque' })
   @IsNotEmpty()
-  title: string;
+  title!: string;
 
   @ApiProperty({ example: 'La bibliothèque sera fermée le 15 mars...' })
   @IsNotEmpty()
-  content: string;
+  content!: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

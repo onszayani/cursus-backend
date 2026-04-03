@@ -200,13 +200,19 @@ export class ForumService {
     } else if (AGENT_SUBTYPES.includes(tagLower)) {
       mentionType = 'ROLE';
       targetUsers = await this.usersService.findByAgentType(tagLower);
-    } else if (GROUP_REGEX.test(tag)) {
+    } else if (GROUP_REGEX.test(tagLower)) {
       mentionType = 'GROUP';
-      targetUsers = await this.usersService.findByGroup(tag.toUpperCase());
+      targetUsers = await this.usersService.findByGroup(tagLower.toUpperCase());
     } else {
+      const user = await this.usersService.findByUsername(tagLower);
+
+      if (!user) {
+        throw new NotFoundException(
+          `Aucun utilisateur trouvé pour la mention @${tagLower}`,
+        );
+      }
       mentionType = 'USER';
-      const user = await this.usersService.findByUsername(tag);
-      if (user) targetUsers = [user];
+      targetUsers = [user];
     }
 
     // Enregistrer la mention

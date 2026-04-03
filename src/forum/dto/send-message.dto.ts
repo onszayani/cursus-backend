@@ -8,7 +8,7 @@ export class SendMessageDto {
       'Contenu du message. Utilisez @username, @role, @GROUPE, @tous',
   })
   @IsNotEmpty()
-  content: string;
+  content!: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

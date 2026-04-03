@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+// import { equals } from 'class-validator';
 
 // Sélecteur sécurisé — exclut le mot de passe et le refreshToken
 const SAFE_SELECT = {
@@ -45,10 +46,16 @@ export class UsersService {
       take: 10,
     });
   }
-
   // Trouver par username exact (pour résoudre @Ahmed_Ben)
   findByUsername(username: string) {
-    return this.prisma.user.findUnique({ where: { username } });
+    return this.prisma.user.findFirst({
+      where: {
+        username: {
+          equals: username,
+          mode: 'insensitive',
+        },
+      },
+    });
   }
 
   // Tous les users d'un groupe/classe (@ING_A1_G1)

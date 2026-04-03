@@ -16,7 +16,7 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
-@ApiTags('💬 Forum')
+@ApiTags('Forum')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('forum')
