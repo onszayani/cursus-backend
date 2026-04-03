@@ -15,6 +15,11 @@ export class NotificationsService {
     return this.prisma.notification.create({ data });
   }
 
+  // Trouver une notification par ID
+  findById(id: string) {
+    return this.prisma.notification.findUnique({ where: { id } });
+  }
+
   // Toutes les notifications d'un utilisateur
   findForUser(recipientId: string) {
     return this.prisma.notification.findMany({

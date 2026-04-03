@@ -32,6 +32,7 @@ export class UsersController {
 
   // GET /users
   @Get()
+  @Roles('admin')
   @ApiOperation({ summary: 'Liste tous les utilisateurs' })
   findAll() {
     return this.usersService.findAll();
@@ -39,6 +40,7 @@ export class UsersController {
 
   // GET /users/search?q=Ahmed   ← pour l'autocomplétion @mentions
   @Get('search')
+  // @Roles('admin')
   @ApiOperation({
     summary: 'Recherche par username (autocomplétion @mentions)',
   })
@@ -49,6 +51,7 @@ export class UsersController {
 
   // GET /users/:id
   @Get(':id')
+  // @Roles('admin')
   @ApiOperation({ summary: "Profil d'un utilisateur" })
   findOne(@Param('id') id: string) {
     return this.usersService.findById(id);

@@ -15,7 +15,7 @@ import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
-@ApiTags('🔔 Notifications')
+@ApiTags('Notifications')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('notifications')
@@ -27,6 +27,13 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Mes notifications (50 dernières)' })
   findAll(@CurrentUser() user: any) {
     return this.notifService.findForUser(user.id);
+  }
+
+  // GET /notifications/{id}
+  @Get(':id')
+  @ApiOperation({ summary: 'Détails d’une notification' })
+  findOne(@Param('id') id: string) {
+    return this.notifService.findById(id);
   }
 
   // GET /notifications/unread-count
