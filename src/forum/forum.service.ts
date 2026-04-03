@@ -1,7 +1,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -105,6 +109,33 @@ export class ForumService {
     });
   }
 
+  // ── Threads où un user est impliqué (créé OU participé) ─────────
+  getThreadsForUser(userId: string) {
+    return this.prisma.thread.findMany({
+      where: {
+        OR: [
+          { creatorId: userId },
+          { messages: { some: { senderId: userId } } },
+        ],
+      },
+      include: {
+        creator: {
+          select: { id: true, firstName: true, lastName: true, role: true },
+        },
+        _count: { select: { messages: true } },
+        // Dernier message du thread
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: {
+            sender: { select: { id: true, firstName: true, lastName: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async sendMessage(threadId: string, senderId: string, dto: SendMessageDto) {
     const thread = await this.prisma.thread.findUnique({
       where: { id: threadId },
@@ -153,7 +184,10 @@ export class ForumService {
   ) {
     const mentionRegex = /@([a-zA-Z0-9_]+)/g;
     const matches = [...content.matchAll(mentionRegex)];
-    if (!matches.length) return;
+    if (!matches.length)
+      throw new ForbiddenException(
+        'Le message doit contenir au moins une mention valide (@)',
+      );
 
     const sender = await this.prisma.user.findUnique({
       where: { id: senderId },

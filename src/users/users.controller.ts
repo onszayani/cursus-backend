@@ -10,6 +10,7 @@ import {
   Body,
   Query,
   UseGuards,
+  Delete,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -38,6 +39,11 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
+  @Get('groups')
+  @ApiOperation({ summary: 'Liste des groupes étudiants' })
+  findGroups() {
+    return this.usersService.findGroups();
+  }
   // GET /users/search?q=Ahmed   ← pour l'autocomplétion @mentions
   @Get('search')
   // @Roles('admin')
@@ -63,6 +69,22 @@ export class UsersController {
   updateMe(@CurrentUser() user: any, @Body() dto: any) {
     const { password, role, email, ...safe } = dto; // champs non modifiables
     return this.usersService.updateProfile(user.id, safe);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Modifier un utilisateur (admin)' })
+  @Roles('admin')
+  @UseGuards(RolesGuard)
+  update(@Param('id') id: string, @Body() dto: any) {
+    return this.usersService.updateProfile(id, dto);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Supprimer un utilisateur (admin)' })
+  @Roles('admin')
+  @UseGuards(RolesGuard)
+  remove(@Param('id') id: string) {
+    return this.usersService.remove(id);
   }
 
   //   // PATCH /users/:id/toggle  ← admin uniquement

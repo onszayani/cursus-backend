@@ -39,6 +39,11 @@ export class ForumController {
     return this.forumService.createThread(dto, user.id);
   }
 
+  @Get('threads/my')
+  @ApiOperation({ summary: 'Mes threads (créés + participés)' })
+  getMyThreads(@CurrentUser() user: any) {
+    return this.forumService.getThreadsForUser(user.id);
+  }
   // GET /forum/threads/:id
   @Get('threads/:id')
   @ApiOperation({ summary: "Détails d'un thread" })

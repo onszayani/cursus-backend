@@ -67,6 +67,15 @@ export class UsersService {
   findByRole(role: string) {
     return this.prisma.user.findMany({ where: { role: role as any } });
   }
+  findGroups() {
+    return this.prisma.user
+      .findMany({
+        where: { studentGroup: { not: null } },
+        select: { studentGroup: true },
+        distinct: ['studentGroup'],
+      })
+      .then((results) => results.map((r) => r.studentGroup));
+  }
 
   // Tous les agents d'un sous-type (@technicien, @responsable_labo...)
   findByAgentType(agentType: string) {
@@ -93,6 +102,13 @@ export class UsersService {
     return this.prisma.user.update({
       where: { id },
       data,
+      select: SAFE_SELECT,
+    });
+  }
+
+  remove(id: string) {
+    return this.prisma.user.delete({
+      where: { id },
       select: SAFE_SELECT,
     });
   }
