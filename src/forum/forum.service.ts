@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
@@ -41,9 +42,40 @@ export class ForumService {
   // THREADS
   // ═══════════════════════════════════════════════════════════════════
 
-  createThread(dto: CreateThreadDto, creatorId: string) {
+  async createOrGetThread(dto: CreateThreadDto, creatorId: string) {
+    // Valider que le destinataire existe
+    await this.validateReceiver(dto.receiverType, dto.receiverValue);
+
+    // Vérifier si un thread existe déjà
+    const existingThread = await this.prisma.thread.findFirst({
+      where: {
+        creatorId,
+        receiverType: dto.receiverType,
+        receiverValue: dto.receiverValue,
+      },
+    });
+
+    if (existingThread) {
+      return existingThread;
+    }
+
+    // Pour les threads USER, on peut stocker l'ID du destinataire
+    let receiverId: string | null = null;
+    if (dto.receiverType === 'USER') {
+      const user = await this.usersService.findByUsername(dto.receiverValue);
+      if (user) receiverId = user.id;
+    }
+
+    // Créer un nouveau thread
     return this.prisma.thread.create({
-      data: { ...dto, creatorId },
+      data: {
+        title: dto.title,
+        creatorId,
+        receiverType: dto.receiverType,
+        receiverValue: dto.receiverValue,
+        receiverId,
+        isPrivate: dto.isPrivate || false,
+      },
       include: {
         creator: {
           select: { id: true, firstName: true, lastName: true, role: true },
@@ -52,16 +84,196 @@ export class ForumService {
     });
   }
 
-  getThreads() {
-    return this.prisma.thread.findMany({
+  private async validateReceiver(type: MentionType, value: string) {
+    const valueLower = value.toLowerCase();
+
+    switch (type) {
+      case 'ALL':
+        if (valueLower !== 'tous' && valueLower !== 'all') {
+          throw new BadRequestException('Pour ALL, utilisez "tous"');
+        }
+        break;
+
+      case 'ROLE':
+        if (
+          !MAIN_ROLES.includes(valueLower) &&
+          !AGENT_SUBTYPES.includes(valueLower)
+        ) {
+          throw new BadRequestException(`Rôle invalide: ${value}`);
+        }
+        const roleUsers =
+          valueLower === 'technicien' || AGENT_SUBTYPES.includes(valueLower)
+            ? await this.usersService.findByAgentType(valueLower)
+            : await this.usersService.findByRole(valueLower);
+
+        if (roleUsers.length === 0) {
+          throw new BadRequestException(
+            `Aucun utilisateur trouvé avec le rôle ${value}`,
+          );
+        }
+        break;
+
+      case 'GROUP':
+        if (!GROUP_REGEX.test(valueLower)) {
+          throw new BadRequestException(`Format de groupe invalide: ${value}`);
+        }
+        const groupUsers = await this.usersService.findByGroup(
+          value.toUpperCase(),
+        );
+        if (groupUsers.length === 0) {
+          throw new BadRequestException(
+            `Aucun utilisateur trouvé dans le groupe ${value}`,
+          );
+        }
+        break;
+
+      case 'USER':
+        const user = await this.usersService.findByUsername(valueLower);
+        if (!user) {
+          throw new BadRequestException(`Utilisateur non trouvé: ${value}`);
+        }
+        break;
+    }
+  }
+
+  async getUserThreads(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        agentType: true,
+        studentGroup: true,
+        username: true,
+      },
+    });
+
+    if (!user) throw new NotFoundException('Utilisateur non trouvé');
+
+    const threads = await this.prisma.thread.findMany({
+      where: {
+        OR: [
+          { creatorId: userId },
+          { receiverType: 'USER', receiverId: userId },
+          { receiverType: 'ALL' },
+          {
+            receiverType: 'ROLE',
+            receiverValue: {
+              in: this.getUserRoleValues(user),
+            },
+          },
+          {
+            receiverType: 'GROUP',
+            receiverValue: user.studentGroup || 'none',
+          },
+        ],
+      },
       include: {
         creator: {
           select: { id: true, firstName: true, lastName: true, role: true },
         },
         _count: { select: { messages: true } },
+        // Récupérer TOUS les messages, pas seulement le dernier
+        messages: {
+          orderBy: { createdAt: 'asc' }, // Tri ascendant pour l'ordre chronologique
+          include: {
+            sender: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                role: true,
+                username: true,
+              },
+            },
+            replyTo: {
+              include: {
+                sender: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                  },
+                },
+              },
+            },
+            readBy: {
+              include: {
+                user: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
+              },
+            },
+          },
+        },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { updatedAt: 'desc' },
     });
+
+    // Ajouter les métadonnées pour chaque thread
+    const threadsWithMeta = await Promise.all(
+      threads.map(async (thread) => ({
+        id: thread.id,
+        title: thread.title,
+        isPrivate: thread.isPrivate,
+        creatorId: thread.creatorId,
+        creator: thread.creator,
+        receiverType: thread.receiverType,
+        receiverValue: thread.receiverValue,
+        receiverId: thread.receiverId,
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+        _count: thread._count,
+        // Tous les messages du thread
+        messages: thread.messages,
+        unreadCount: await this.countUnreadMessages(thread.id, userId),
+        receiverDisplay: this.formatReceiverDisplay(
+          thread.receiverType,
+          thread.receiverValue,
+        ),
+      })),
+    );
+
+    return threadsWithMeta;
+  }
+
+  private getUserRoleValues(user: any): string[] {
+    const roles = [user.role];
+    if (user.agentType) roles.push(user.agentType);
+    if (user.role === 'teacher') roles.push('enseignant');
+    return roles;
+  }
+
+  private formatReceiverDisplay(type: MentionType, value: string): string {
+    switch (type) {
+      case 'ALL':
+        return 'Tout le monde';
+      case 'ROLE':
+        return `@${value}`;
+      case 'GROUP':
+        return `Groupe ${value}`;
+      case 'USER':
+        return value;
+      default:
+        return value;
+    }
+  }
+
+  private async countUnreadMessages(
+    threadId: string,
+    userId: string,
+  ): Promise<number> {
+    const unreadMessages = await this.prisma.message.findMany({
+      where: {
+        threadId,
+        senderId: { not: userId },
+        readBy: {
+          none: {
+            userId,
+          },
+        },
+      },
+    });
+    return unreadMessages.length;
   }
 
   async getThreadById(id: string) {
@@ -77,7 +289,14 @@ export class ForumService {
     return thread;
   }
 
-  deleteThread(id: string) {
+  async deleteThread(id: string, userId: string) {
+    const thread = await this.getThreadById(id);
+    if (!thread) throw new NotFoundException('Thread non trouvé');
+    if (thread.creatorId !== userId) {
+      throw new ForbiddenException(
+        'Vous ne pouvez supprimer que vos propres threads',
+      );
+    }
     return this.prisma.thread.delete({ where: { id } });
   }
 
@@ -85,8 +304,10 @@ export class ForumService {
   // MESSAGES
   // ═══════════════════════════════════════════════════════════════════
 
-  getMessages(threadId: string) {
-    return this.prisma.message.findMany({
+  async getMessages(threadId: string, userId: string) {
+    await this.checkThreadAccess(threadId, userId);
+
+    const messages = await this.prisma.message.findMany({
       where: { threadId },
       include: {
         sender: {
@@ -98,48 +319,122 @@ export class ForumService {
             agentType: true,
           },
         },
-        mentions: true,
         replyTo: {
           include: {
             sender: { select: { id: true, firstName: true, lastName: true } },
           },
         },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-  }
-
-  // ── Threads où un user est impliqué (créé OU participé) ─────────
-  getThreadsForUser(userId: string) {
-    return this.prisma.thread.findMany({
-      where: {
-        OR: [
-          { creatorId: userId },
-          { messages: { some: { senderId: userId } } },
-        ],
-      },
-      include: {
-        creator: {
-          select: { id: true, firstName: true, lastName: true, role: true },
-        },
-        _count: { select: { messages: true } },
-        // Dernier message du thread
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
+        readBy: {
           include: {
-            sender: { select: { id: true, firstName: true, lastName: true } },
+            user: {
+              select: { id: true, firstName: true, lastName: true },
+            },
           },
         },
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    // Marquer les messages comme lus en arrière-plan
+    this.markMessagesAsRead(threadId, userId).catch(console.error);
+
+    return messages;
+  }
+
+  // Méthode publique pour le gateway
+  async checkThreadAccess(threadId: string, userId: string): Promise<void> {
+    const thread = await this.prisma.thread.findUnique({
+      where: { id: threadId },
+      include: {
+        creator: { select: { id: true } },
+      },
+    });
+
+    if (!thread) throw new NotFoundException('Thread non trouvé');
+
+    if (thread.creatorId === userId) return;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        agentType: true,
+        studentGroup: true,
+        username: true,
+      },
+    });
+
+    if (!user) throw new NotFoundException('Utilisateur non trouvé');
+
+    let hasAccess = false;
+
+    switch (thread.receiverType) {
+      case 'ALL':
+        hasAccess = true;
+        break;
+      case 'USER':
+        hasAccess = thread.receiverId === userId;
+        break;
+      case 'ROLE':
+        const userRoles = this.getUserRoleValues(user);
+        hasAccess = userRoles.includes(thread.receiverValue);
+        break;
+      case 'GROUP':
+        hasAccess = user.studentGroup === thread.receiverValue;
+        break;
+    }
+
+    if (!hasAccess) {
+      throw new ForbiddenException(
+        "Vous n'avez pas accès à cette conversation",
+      );
+    }
+  }
+
+  private async markMessagesAsRead(threadId: string, userId: string) {
+    const messages = await this.prisma.message.findMany({
+      where: {
+        threadId,
+        senderId: { not: userId },
+        readBy: {
+          none: {
+            userId,
+          },
+        },
+      },
+      select: { id: true },
+    });
+
+    if (messages.length === 0) return;
+
+    await this.prisma.readReceipt.createMany({
+      data: messages.map((msg) => ({
+        messageId: msg.id,
+        userId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  async markMessagesAsReadByIds(messageIds: string[], userId: string) {
+    const receipts = messageIds.map((messageId) => ({
+      messageId,
+      userId,
+    }));
+
+    await this.prisma.readReceipt.createMany({
+      data: receipts,
+      skipDuplicates: true,
+    });
   }
 
   async sendMessage(threadId: string, senderId: string, dto: SendMessageDto) {
+    await this.checkThreadAccess(threadId, senderId);
+
     const thread = await this.prisma.thread.findUnique({
       where: { id: threadId },
     });
+
     if (!thread) throw new NotFoundException('Thread non trouvé');
 
     const message = await this.prisma.message.create({
@@ -152,10 +447,12 @@ export class ForumService {
       },
     });
 
-    // 🔥 résolution des mentions
-    await this.resolveMentions(dto.content, message.id, senderId, threadId);
+    await this.prisma.thread.update({
+      where: { id: threadId },
+      data: { updatedAt: new Date() },
+    });
 
-    return this.prisma.message.findUnique({
+    const fullMessage = await this.prisma.message.findUnique({
       where: { id: message.id },
       include: {
         sender: {
@@ -167,107 +464,85 @@ export class ForumService {
             agentType: true,
           },
         },
-        mentions: true,
       },
     });
+
+    // Envoyer les notifications aux destinataires du thread
+    if (fullMessage) {
+      await this.notifyThreadRecipients(
+        thread,
+        senderId,
+        dto.content,
+        fullMessage,
+      );
+    }
+
+    return fullMessage;
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // MENTIONS
-  // ═══════════════════════════════════════════════════════════════════
+  // Méthode publique pour le gateway
+  async getThreadRecipients(thread: any): Promise<string[]> {
+    switch (thread.receiverType) {
+      case 'ALL':
+        const allUsers = await this.usersService.findAllActive();
+        return allUsers.map((u) => u.id);
 
-  private async resolveMentions(
-    content: string,
-    messageId: string,
+      case 'ROLE':
+        if (AGENT_SUBTYPES.includes(thread.receiverValue)) {
+          const agentUsers = await this.usersService.findByAgentType(
+            thread.receiverValue,
+          );
+          return agentUsers.map((u) => u.id);
+        }
+        const roleUsers = await this.usersService.findByRole(
+          thread.receiverValue,
+        );
+        return roleUsers.map((u) => u.id);
+
+      case 'GROUP':
+        const groupUsers = await this.usersService.findByGroup(
+          thread.receiverValue,
+        );
+        return groupUsers.map((u) => u.id);
+
+      case 'USER':
+        if (thread.receiverId) return [thread.receiverId];
+        const user = await this.usersService.findByUsername(
+          thread.receiverValue,
+        );
+        return user ? [user.id] : [];
+
+      default:
+        return [];
+    }
+  }
+
+  private async notifyThreadRecipients(
+    thread: any,
     senderId: string,
-    threadId: string,
+    content: string,
+    message: any,
   ) {
-    const mentionRegex = /@([a-zA-Z0-9_]+)/g;
-    const matches = [...content.matchAll(mentionRegex)];
-    if (!matches.length)
-      throw new ForbiddenException(
-        'Le message doit contenir au moins une mention valide (@)',
-      );
+    const recipients = await this.getThreadRecipients(thread);
 
     const sender = await this.prisma.user.findUnique({
       where: { id: senderId },
       select: { firstName: true, lastName: true },
     });
 
-    if (!sender) throw new Error('Sender not found');
+    const senderName = sender
+      ? `${sender.firstName} ${sender.lastName}`
+      : "Quelqu'un";
 
-    const senderName = `${sender.firstName} ${sender.lastName}`;
-
-    for (const match of matches) {
-      const tag = match[1];
-
-      await this.processSingleMention(
-        tag,
-        messageId,
-        senderId,
-        senderName,
-        threadId,
-        content,
-      );
-    }
-  }
-
-  private async processSingleMention(
-    tag: string,
-    messageId: string,
-    senderId: string,
-    senderName: string,
-    threadId: string,
-    content: string,
-  ) {
-    let mentionType: MentionType;
-    let targetUsers: { id: string }[] = [];
-
-    const tagLower = tag.toLowerCase();
-
-    if (tagLower === 'tous' || tagLower === 'all') {
-      mentionType = 'ALL';
-      targetUsers = await this.usersService.findAllActive();
-    } else if (MAIN_ROLES.includes(tagLower)) {
-      mentionType = 'ROLE';
-      targetUsers = await this.usersService.findByRole(tagLower);
-    } else if (AGENT_SUBTYPES.includes(tagLower)) {
-      mentionType = 'ROLE';
-      targetUsers = await this.usersService.findByAgentType(tagLower);
-    } else if (GROUP_REGEX.test(tagLower)) {
-      mentionType = 'GROUP';
-      targetUsers = await this.usersService.findByGroup(tagLower.toUpperCase());
-    } else {
-      const user = await this.usersService.findByUsername(tagLower);
-
-      if (!user) {
-        throw new NotFoundException(
-          `Aucun utilisateur trouvé pour la mention @${tagLower}`,
-        );
-      }
-      mentionType = 'USER';
-      targetUsers = [user];
-    }
-
-    // Enregistrer la mention
-    await this.prisma.mention.create({
-      data: {
-        type: mentionType,
-        targetValue: tag,
-        messageId,
-      },
-    });
-
-    // 🔥 Notifications optimisées (parallèle)
     await Promise.all(
-      targetUsers
-        .filter((user) => user.id !== senderId)
-        .map((user) =>
+      recipients
+        .filter((recipientId) => recipientId !== senderId)
+        .map((recipientId) =>
           this.notificationsService.create({
-            title: `Vous avez été mentionné par ${senderName}`,
+            title: `Nouveau message de ${senderName}`,
             body: this.truncate(content, 120),
-            link: `/forum/threads/${threadId}`,
-            recipientId: user.id,
+            link: `/forum/threads/${thread.id}`,
+            recipientId,
           }),
         ),
     );
