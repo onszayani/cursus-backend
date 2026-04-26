@@ -33,7 +33,6 @@ export class UsersController {
 
   // GET /users
   @Get()
-  @Roles('admin')
   @ApiOperation({ summary: 'Liste tous les utilisateurs' })
   findAll() {
     return this.usersService.findAll();

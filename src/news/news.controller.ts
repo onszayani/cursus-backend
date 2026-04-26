@@ -25,7 +25,6 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 export class NewsController {
   constructor(private readonly newsService: NewsService) {}
 
-  // GET /news  → filtré selon le rôle
   @Get()
   @ApiOperation({
     summary: 'Mes actualités (filtrées par groupe pour les étudiants)',
