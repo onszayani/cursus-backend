@@ -26,7 +26,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @ApiTags(' Users')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}

@@ -1,6 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────
-// Connexion PostgreSQL via la variable DATABASE_URL du .env
-// ─────────────────────────────────────────────────────────────────────
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,10 +6,6 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
-// ═════════════════════════════════════════════════════════════════════
-// ENUMS
-// ═════════════════════════════════════════════════════════════════════
 
 enum UserRole {
   student
@@ -36,10 +29,6 @@ enum MentionType {
   GROUP // @ING_A1_G1
   USER // @Ahmed_Ben
 }
-
-// ═════════════════════════════════════════════════════════════════════
-// TABLE USERS — tous les rôles dans une seule table
-// ═════════════════════════════════════════════════════════════════════
 
 model User {
   id        String   @id @default(uuid())
@@ -72,9 +61,6 @@ model User {
   @@map("users")
 }
 
-// ═════════════════════════════════════════════════════════════════════
-// TABLE SCHEDULE — emplois du temps
-// ═════════════════════════════════════════════════════════════════════
 
 model Schedule {
   id           String  @id @default(uuid())
@@ -95,10 +81,6 @@ model Schedule {
   @@map("schedules")
 }
 
-// ═════════════════════════════════════════════════════════════════════
-// TABLE NEWS — actualités
-// ═════════════════════════════════════════════════════════════════════
-
 model News {
   id          String  @id @default(uuid())
   title       String
@@ -115,10 +97,6 @@ model News {
 
   @@map("news")
 }
-
-// ═════════════════════════════════════════════════════════════════════
-// TABLE COURSE_MATERIALS — supports de cours
-// ═════════════════════════════════════════════════════════════════════
 
 model CourseMaterial {
   id          String  @id @default(uuid())
@@ -138,10 +116,6 @@ model CourseMaterial {
   @@map("course_materials")
 }
 
-// ═════════════════════════════════════════════════════════════════════
-// TABLE FORUM THREADS — sujets du forum
-// ═════════════════════════════════════════════════════════════════════
-
 model Thread {
   id        String  @id @default(uuid())
   title     String
@@ -157,10 +131,6 @@ model Thread {
   @@map("forum_threads")
 }
 
-// ═════════════════════════════════════════════════════════════════════
-// TABLE MESSAGES — messages du forum
-// ═════════════════════════════════════════════════════════════════════
-
 model Message {
   id            String  @id @default(uuid())
   content       String
@@ -173,7 +143,7 @@ model Message {
   thread   Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
   // Réponse à un autre message
-  replyToId String?
+  replyToId String?    
   replyTo   Message?  @relation("MessageReplies", fields: [replyToId], references: [id])
   replies   Message[] @relation("MessageReplies")
 
@@ -184,9 +154,6 @@ model Message {
   @@map("forum_messages")
 }
 
-// ═════════════════════════════════════════════════════════════════════
-// TABLE MENTIONS — résolution des @tags dans les messages
-// ═════════════════════════════════════════════════════════════════════
 
 model Mention {
   id          String      @id @default(uuid())
@@ -199,9 +166,6 @@ model Mention {
   @@map("mentions")
 }
 
-// ═════════════════════════════════════════════════════════════════════
-// TABLE NOTIFICATIONS
-// ═════════════════════════════════════════════════════════════════════
 
 model Notification {
   id     String  @id @default(uuid())
