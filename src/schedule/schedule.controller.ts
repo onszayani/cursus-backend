@@ -20,7 +20,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @ApiTags('Schedule')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('schedule')
 export class ScheduleController {
   constructor(private readonly scheduleService: ScheduleService) {}
@@ -38,6 +38,7 @@ export class ScheduleController {
 
   // GET /schedule/group/:group
   @Get('group/:group')
+  @Roles('admin')
   @ApiOperation({ summary: "Emploi du temps d'un groupe" })
   findByGroup(@Param('group') group: string) {
     return this.scheduleService.findByGroup(group);

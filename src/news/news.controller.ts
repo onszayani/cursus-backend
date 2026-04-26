@@ -20,7 +20,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @ApiTags('News')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('news')
 export class NewsController {
   constructor(private readonly newsService: NewsService) {}
@@ -54,7 +54,7 @@ export class NewsController {
   // PATCH /news/:id
   @Patch(':id')
   @UseGuards(RolesGuard)
-  @Roles('admin', 'teacher')
+  @Roles('admin')
   update(
     @Param('id') id: string,
     @Body() dto: Partial<CreateNewsDto>,
@@ -66,7 +66,7 @@ export class NewsController {
   // DELETE /news/:id
   @Delete(':id')
   @UseGuards(RolesGuard)
-  @Roles('admin', 'teacher')
+  @Roles('admin')
   remove(@Param('id') id: string, @CurrentUser() user: any) {
     return this.newsService.remove(id, user.id, user.role);
   }
