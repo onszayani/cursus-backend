@@ -38,6 +38,7 @@ export class ScheduleController {
 
   // GET /schedule/group/:group
   @Get('group/:group')
+  @Roles('admin')
   @ApiOperation({ summary: "Emploi du temps d'un groupe" })
   findByGroup(@Param('group') group: string) {
     return this.scheduleService.findByGroup(group);

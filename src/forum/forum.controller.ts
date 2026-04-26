@@ -25,25 +25,25 @@ export class ForumController {
 
   // ── THREADS ─────────────────────────────────────────────────────────
 
-  // GET /forum/threads
+  // GET /forum/threads - Tous les threads accessibles à l'utilisateur
   @Get('threads')
-  @ApiOperation({ summary: 'Liste tous les threads du forum' })
-  getThreads() {
-    return this.forumService.getThreads();
+  @ApiOperation({ summary: 'Liste tous les threads accessibles' })
+  getUserThreads(@CurrentUser() user: any) {
+    return this.forumService.getUserThreads(user.id);
   }
 
-  // POST /forum/threads
+  // POST /forum/threads - Créer un nouveau thread (ou récupérer l'existant)
   @Post('threads')
-  @ApiOperation({ summary: 'Créer un nouveau thread' })
-  createThread(@CurrentUser() user: any, @Body() dto: CreateThreadDto) {
-    return this.forumService.createThread(dto, user.id);
+  @ApiOperation({ summary: "Créer un nouveau thread ou récupérer l'existant" })
+  createOrGetThread(@CurrentUser() user: any, @Body() dto: CreateThreadDto) {
+    return this.forumService.createOrGetThread(dto, user.id);
+  }
+  @Get('threads/my')
+  @ApiOperation({ summary: 'Mes threads (créés + où je suis destinataire)' })
+  getMyThreads(@CurrentUser() user: any) {
+    return this.forumService.getUserThreads(user.id);
   }
 
-  @Get('threads/my')
-  @ApiOperation({ summary: 'Mes threads (créés + participés)' })
-  getMyThreads(@CurrentUser() user: any) {
-    return this.forumService.getThreadsForUser(user.id);
-  }
   // GET /forum/threads/:id
   @Get('threads/:id')
   @ApiOperation({ summary: "Détails d'un thread" })
@@ -54,8 +54,8 @@ export class ForumController {
   // DELETE /forum/threads/:id
   @Delete('threads/:id')
   @ApiOperation({ summary: 'Supprimer un thread' })
-  deleteThread(@Param('id') id: string) {
-    return this.forumService.deleteThread(id);
+  deleteThread(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.forumService.deleteThread(id, user.id);
   }
 
   // ── MESSAGES ────────────────────────────────────────────────────────
@@ -63,17 +63,13 @@ export class ForumController {
   // GET /forum/threads/:id/messages
   @Get('threads/:id/messages')
   @ApiOperation({ summary: "Messages d'un thread" })
-  getMessages(@Param('id') threadId: string) {
-    return this.forumService.getMessages(threadId);
+  getMessages(@Param('id') threadId: string, @CurrentUser() user: any) {
+    return this.forumService.getMessages(threadId, user.id);
   }
 
   // POST /forum/threads/:id/messages
   @Post('threads/:id/messages')
-  @ApiOperation({
-    summary: 'Envoyer un message (supporte @mentions)',
-    description:
-      'Utilisez @tous, @technicien, @ING_A1_G1, @Ahmed_Ben dans le contenu',
-  })
+  @ApiOperation({ summary: 'Envoyer un message dans le thread' })
   sendMessage(
     @Param('id') threadId: string,
     @CurrentUser() user: any,

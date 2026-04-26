@@ -53,7 +53,7 @@ export class NewsController {
   // PATCH /news/:id
   @Patch(':id')
   @UseGuards(RolesGuard)
-  @Roles('admin', 'teacher')
+  @Roles('admin')
   update(
     @Param('id') id: string,
     @Body() dto: Partial<CreateNewsDto>,
@@ -65,7 +65,7 @@ export class NewsController {
   // DELETE /news/:id
   @Delete(':id')
   @UseGuards(RolesGuard)
-  @Roles('admin', 'teacher')
+  @Roles('admin')
   remove(@Param('id') id: string, @CurrentUser() user: any) {
     return this.newsService.remove(id, user.id, user.role);
   }

@@ -19,7 +19,7 @@ import { ForumService } from './forum.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @WebSocketGateway({
-  namespace: '/forum', // URL: ws://localhost:3000/forum
+  namespace: '/forum',
   cors: { origin: '*', credentials: true },
 })
 export class ForumGateway
@@ -29,9 +29,8 @@ export class ForumGateway
   server!: Server;
 
   private readonly logger = new Logger(ForumGateway.name);
-
-  // Map userId → socketId (pour les notifications ciblées)
   private connectedUsers = new Map<string, string>();
+  private userThreads = new Map<string, Set<string>>();
 
   constructor(
     private jwt: JwtService,
@@ -44,16 +43,14 @@ export class ForumGateway
     this.logger.log('WebSocket Gateway /forum initialisé');
   }
 
-  // ── CONNEXION ───────────────────────────────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/require-await
   async handleConnection(client: Socket) {
     try {
-      // Récupérer le token depuis les headers ou auth
       const token =
         client.handshake.auth?.token ||
         client.handshake.headers?.authorization?.replace('Bearer ', '');
 
       if (!token) {
+        this.logger.warn('Connexion refusée: pas de token');
         client.disconnect();
         return;
       }
@@ -62,16 +59,21 @@ export class ForumGateway
         secret: this.config.get('JWT_SECRET'),
       });
 
-      // Stocker les infos de l'utilisateur sur le socket
       client.data.userId = payload.sub;
       client.data.userRole = payload.role;
-      client.data.email = payload.email;
+      client.data.userEmail = payload.email;
 
-      // Enregistrer la connexion
       this.connectedUsers.set(payload.sub, client.id);
+      this.userThreads.set(payload.sub, new Set());
+
       this.logger.log(`User ${payload.email} connecté (socket: ${client.id})`);
 
-      client.emit('connected', { message: 'Connecté au forum WebSocket' });
+      await this.autoJoinUserThreads(payload.sub, client);
+
+      client.emit('connected', {
+        message: 'Connecté au forum WebSocket',
+        userId: payload.sub,
+      });
     } catch (err) {
       if (err instanceof Error) {
         this.logger.warn(`Connexion rejetée: ${err.message}`);
@@ -82,75 +84,173 @@ export class ForumGateway
     }
   }
 
-  // ── DÉCONNEXION ─────────────────────────────────────────────────────
-  handleDisconnect(client: Socket) {
-    if (client.data?.userId) {
-      this.connectedUsers.delete(client.data.userId);
-      this.logger.log(`User ${client.data.email} déconnecté`);
+  private async autoJoinUserThreads(userId: string, client: Socket) {
+    try {
+      const threads = await this.forumService.getUserThreads(userId);
+      const userThreadSet = this.userThreads.get(userId);
+
+      for (const thread of threads) {
+        const roomName = `thread:${thread.id}`;
+        await client.join(roomName);
+        userThreadSet?.add(thread.id);
+        this.logger.debug(`User ${userId} auto-joined ${roomName}`);
+      }
+    } catch (error) {
+      this.logger.error(`Erreur auto-join pour user ${userId}:`, error);
     }
   }
 
-  // ── REJOINDRE UN THREAD ─────────────────────────────────────────────
-  // Client envoie: socket.emit('joinThread', 'thread-uuid')
+  handleDisconnect(client: Socket) {
+    if (client.data?.userId) {
+      this.connectedUsers.delete(client.data.userId);
+      this.userThreads.delete(client.data.userId);
+      this.logger.log(`User ${client.data.userEmail} déconnecté`);
+    }
+  }
+
   @SubscribeMessage('joinThread')
   async handleJoinThread(
     @ConnectedSocket() client: Socket,
     @MessageBody() threadId: string,
   ) {
-    await client.join(`thread:${threadId}`);
-    this.logger.log(`User ${client.data.email} a rejoint thread:${threadId}`);
-    return { event: 'joinedThread', data: { threadId } };
+    if (!client.data?.userId)
+      return { event: 'error', data: { message: 'Non authentifié' } };
+
+    try {
+      await this.forumService.checkThreadAccess(threadId, client.data.userId);
+
+      await client.join(`thread:${threadId}`);
+
+      const userThreads = this.userThreads.get(client.data.userId);
+      userThreads?.add(threadId);
+
+      this.logger.log(
+        `User ${client.data.userEmail} a rejoint thread:${threadId}`,
+      );
+
+      return { event: 'joinedThread', data: { threadId } };
+    } catch (error) {
+      return { event: 'error', data: { message: error.message } };
+    }
   }
 
-  // ── QUITTER UN THREAD ───────────────────────────────────────────────
   @SubscribeMessage('leaveThread')
   async handleLeaveThread(
     @ConnectedSocket() client: Socket,
     @MessageBody() threadId: string,
   ) {
+    if (!client.data?.userId) return;
+
     await client.leave(`thread:${threadId}`);
+
+    const userThreads = this.userThreads.get(client.data.userId);
+    userThreads?.delete(threadId);
+
+    this.logger.log(
+      `User ${client.data.userEmail} a quitté thread:${threadId}`,
+    );
+
     return { event: 'leftThread', data: { threadId } };
   }
 
-  // ── ENVOYER UN MESSAGE VIA WEBSOCKET ────────────────────────────────
-  // Client envoie: socket.emit('sendMessage', { threadId, content, replyToId? })
   @SubscribeMessage('sendMessage')
   async handleMessage(
     @ConnectedSocket() client: Socket,
     @MessageBody()
     data: { threadId: string; content: string; replyToId?: string },
   ) {
-    if (!client.data?.userId) return;
+    if (!client.data?.userId) {
+      return { event: 'error', data: { message: 'Non authentifié' } };
+    }
 
-    // Enregistrer le message (+ déclencher les @mentions automatiquement)
-    const message = await this.forumService.sendMessage(
-      data.threadId,
-      client.data.userId,
-      { content: data.content, replyToId: data.replyToId },
-    );
+    try {
+      const message = await this.forumService.sendMessage(
+        data.threadId,
+        client.data.userId,
+        { content: data.content, replyToId: data.replyToId },
+      );
 
-    // Diffuser le message à tous les membres du thread
-    this.server.to(`thread:${data.threadId}`).emit('newMessage', message);
+      if (!message) {
+        return { event: 'error', data: { message: 'Message non créé' } };
+      }
 
-    return message;
+      const thread = await this.forumService.getThreadById(data.threadId);
+      const recipients = await this.forumService.getThreadRecipients(thread);
+
+      this.server.to(`thread:${data.threadId}`).emit('newMessage', message);
+
+      for (const recipientId of recipients) {
+        if (
+          recipientId !== client.data.userId &&
+          !this.isUserInThread(recipientId, data.threadId)
+        ) {
+          this.sendNotificationToUser(recipientId, {
+            title: `Nouveau message de ${message.sender.firstName} ${message.sender.lastName}`,
+            body: message.content.substring(0, 120),
+            threadId: data.threadId,
+            messageId: message.id,
+          });
+        }
+      }
+
+      return { event: 'messageSent', data: message };
+    } catch (error) {
+      this.logger.error(`Erreur envoi message:`, error);
+      return { event: 'error', data: { message: error.message } };
+    }
   }
 
-  // ── INDICATEUR 'EN TRAIN D\'ÉCRIRE' ────────────────────────────────
-  // Client envoie: socket.emit('typing', { threadId, isTyping: true })
   @SubscribeMessage('typing')
   handleTyping(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { threadId: string; isTyping: boolean },
   ) {
-    // Diffuser aux autres membres du thread
+    if (!client.data?.userId) return;
+
     client.to(`thread:${data.threadId}`).emit('userTyping', {
       userId: client.data.userId,
+      userName: client.data.userEmail,
       isTyping: data.isTyping,
     });
   }
 
-  // ── MÉTHODE PUBLIQUE pour notifier un user spécifique ───────────────
-  // Appelée par NotificationsService après création d'une notification
+  @SubscribeMessage('markAsRead')
+  async handleMarkAsRead(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { threadId: string; messageIds: string[] },
+  ) {
+    if (!client.data?.userId) return;
+
+    try {
+      await this.forumService.markMessagesAsReadByIds(
+        data.messageIds,
+        client.data.userId,
+      );
+
+      client.to(`thread:${data.threadId}`).emit('messagesRead', {
+        userId: client.data.userId,
+        messageIds: data.messageIds,
+      });
+
+      return { event: 'markedAsRead', data: { success: true } };
+    } catch (error) {
+      return { event: 'error', data: { message: error.message } };
+    }
+  }
+
+  @SubscribeMessage('getOnlineUsers')
+  handleGetOnlineUsers(@ConnectedSocket() client: Socket) {
+    if (!client.data?.userId) return;
+
+    const onlineUsers = Array.from(this.connectedUsers.keys());
+    client.emit('onlineUsers', onlineUsers);
+  }
+
+  private isUserInThread(userId: string, threadId: string): boolean {
+    const userThreads = this.userThreads.get(userId);
+    return userThreads?.has(threadId) || false;
+  }
+
   sendNotificationToUser(userId: string, notification: any) {
     const socketId = this.connectedUsers.get(userId);
     if (socketId) {
@@ -159,7 +259,12 @@ export class ForumGateway
     }
   }
 
-  // Vérifie si un user est en ligne
+  sendNotificationToThread(threadId: string, notification: any) {
+    this.server
+      .to(`thread:${threadId}`)
+      .emit('threadNotification', notification);
+  }
+
   isUserOnline(userId: string): boolean {
     return this.connectedUsers.has(userId);
   }

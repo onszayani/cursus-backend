@@ -20,6 +20,7 @@ export class UpdateUserDto {
   @IsOptional()
   prenom?: string;
 
+  // Username
   @ApiProperty({ enum: UserRole, required: false })
   @IsEnum(UserRole)
   @IsOptional()

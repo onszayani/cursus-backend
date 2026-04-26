@@ -1,3 +1,4 @@
+// Connexion PostgreSQL via la variable DATABASE_URL du .env
 generator client {
   provider = "prisma-client-js"
 }
@@ -6,6 +7,8 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+// ENUMS
 
 enum UserRole {
   student
@@ -29,6 +32,8 @@ enum MentionType {
   GROUP // @ING_A1_G1
   USER // @Ahmed_Ben
 }
+
+// TABLE USERS — tous les rôles dans une seule table
 
 model User {
   id        String   @id @default(uuid())
@@ -54,6 +59,7 @@ model User {
   sentMessages      Message[]        @relation("SenderMessages")
   createdThreads    Thread[]         @relation("CreatorThreads")
   notifications     Notification[]   @relation("RecipientNotifications")
+  readReceipts      ReadReceipt[]    // Relation ajoutée pour les accusés de lecture
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -61,6 +67,7 @@ model User {
   @@map("users")
 }
 
+// TABLE SCHEDULE — emplois du temps
 
 model Schedule {
   id           String  @id @default(uuid())
@@ -81,6 +88,8 @@ model Schedule {
   @@map("schedules")
 }
 
+// TABLE NEWS — actualités
+
 model News {
   id          String  @id @default(uuid())
   title       String
@@ -97,6 +106,8 @@ model News {
 
   @@map("news")
 }
+
+// TABLE COURSE_MATERIALS — supports de cours
 
 model CourseMaterial {
   id          String  @id @default(uuid())
@@ -116,44 +127,76 @@ model CourseMaterial {
   @@map("course_materials")
 }
 
+// TABLE FORUM THREADS — sujets du forum (conversations uniques)
+
 model Thread {
-  id        String  @id @default(uuid())
-  title     String
-  isPrivate Boolean @default(false)
+  id           String   @id @default(uuid())
+  title        String
+  isPrivate    Boolean  @default(false)
+  
+  // Le créateur du thread (l'initiateur de la conversation)
+  creatorId    String
+  creator      User     @relation("CreatorThreads", fields: [creatorId], references: [id])
+  
+  // Le destinataire principal du thread (peut être un username, group, role, ou "all")
+  receiverType MentionType // ALL, ROLE, GROUP, USER
+  receiverValue String     // ex: 'technicien', 'ING_A1_G1', 'Ahmed_Ben', 'tous'
+  
+  // Pour les threads USER-TO-USER, stocker l'ID du destinataire pour faciliter les recherches
+  receiverId   String?    // Uniquement si receiverType = USER
+  
+  messages     Message[]
+  
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
-  creatorId String
-  creator   User   @relation("CreatorThreads", fields: [creatorId], references: [id])
-
-  messages Message[]
-
-  createdAt DateTime @default(now())
-
+  @@unique([creatorId, receiverType, receiverValue]) // Empêche la création de threads dupliqués
   @@map("forum_threads")
 }
 
+// TABLE MESSAGES — messages du forum
+
 model Message {
-  id            String  @id @default(uuid())
+  id            String   @id @default(uuid())
   content       String
   attachmentUrl String?
-
-  senderId String
-  sender   User   @relation("SenderMessages", fields: [senderId], references: [id])
-
-  threadId String
-  thread   Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-
+  
+  senderId      String
+  sender        User     @relation("SenderMessages", fields: [senderId], references: [id])
+  
+  threadId      String
+  thread        Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  
   // Réponse à un autre message
-  replyToId String?    
-  replyTo   Message?  @relation("MessageReplies", fields: [replyToId], references: [id])
-  replies   Message[] @relation("MessageReplies")
-
-  mentions Mention[]
-
-  createdAt DateTime @default(now())
-
+  replyToId     String?
+  replyTo       Message? @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies       Message[] @relation("MessageReplies")
+  
+  isRead        Boolean  @default(false) // Suivi de lecture par message (déprécié, utiliser readBy)
+  readBy        ReadReceipt[] // Qui a lu ce message
+  
+  mentions      Mention[] // Mentions associées à ce message
+  
+  createdAt     DateTime @default(now())
+  
   @@map("forum_messages")
 }
 
+// TABLE READ RECEIPTS — accusés de lecture
+
+model ReadReceipt {
+  id        String   @id @default(uuid())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  readAt    DateTime @default(now())
+  
+  @@unique([messageId, userId])
+  @@map("read_receipts")
+}
+
+// TABLE MENTIONS — résolution des @tags dans les messages
 
 model Mention {
   id          String      @id @default(uuid())
@@ -166,6 +209,7 @@ model Mention {
   @@map("mentions")
 }
 
+// TABLE NOTIFICATIONS
 
 model Notification {
   id     String  @id @default(uuid())
